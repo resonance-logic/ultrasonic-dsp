@@ -89,7 +89,7 @@ void push_immediate_web_update() {
                   ",\"pwr\":" + String(current_power) + ",\"target_pwr\":" + String(target_power) + 
                   ",\"temp\":" + String(current_temperature) + ",\"rms\":" + String(current_rms) + 
                   ",\"timer\":\"00:00 / 00:00\",\"scan_freq\":0,\"scan_rms\":0}";
-    // === ЛИНЕЙКА ОТЛАДКИ ===
+    // === DEBUG LINE ===
     Serial.print("WS SEND: ");
     Serial.println(json); 
     // =======================
