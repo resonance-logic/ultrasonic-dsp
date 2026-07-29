@@ -1,108 +1,322 @@
-#ifndef __WEB_PAGE_H
-#define __WEB_PAGE_H
+#ifndef WEB_PAGE_H
+#define WEB_PAGE_H
 
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultrasonic Cavitation Controller</title>
+    <title>Ultrasonic Generator. Magnetostrictive transducer Panel. </title>
     <style>
-        body { font-family: Arial, sans-serif; background: #121212; color: #e0e0e0; margin: 20px; text-align: center; }
-        .container { max-width: 600px; margin: 0 auto; background: #1e1e1e; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-        h1 { color: #00adb5; font-size: 24px; }
-        .card { background: #252525; padding: 15px; margin: 10px 0; border-radius: 6px; text-align: left; }
-        .label { font-size: 14px; color: #888; }
-        .value { font-size: 22px; font-weight: bold; color: #fff; }
-        .slider-container { margin: 20px 0; text-align: left; }
-        input[type=range] { width: 100%; height: 8px; border-radius: 5px; background: #393e46; outline: none; -webkit-appearance: none; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #00adb5; cursor: pointer; }
-        .btn { background: #00adb5; color: #fff; border: none; padding: 12px 24px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; font-weight: bold; margin-top: 10px; }
-        .btn:hover { background: #007a82; }
-        svg { background: #1a1a1a; border: 1px solid #333; margin-top: 15px; border-radius: 4px; }
-        polyline { fill: none; stroke: #00adb5; stroke-width: 2; }
+        /* Fully Autonomous Styles: Industrial Dashboard */
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background-color: #0f172a; color: #f8fafc; padding: 15px; display: flex; flex-direction: column; align-items: center; }
+        .container { width: 100%; max-width: 650px; display: flex; flex-direction: column; gap: 15px; }
+        
+        /* Grid for information cards */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        
+        /* cards */
+        .card { background-color: #1e293b; border-radius: 12px; padding: 15px; border: 1px solid #334155; transition: all 0.2s ease; }
+        .card.changed { border-color: #eab308; box-shadow: 0 0 10px rgba(234, 179, 8, 0.2); }
+        .card.alarm { border-color: #ef4444; background-color: #451a1a; box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); }
+        
+        h3 { font-size: 13px; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+        .val { font-size: 24px; font-weight: bold; color: #38bdf8; }
+        .warn { color: #eab308 !important; }
+        
+        /* Slider */
+        input[type=range] { width: 100%; margin-top: 10px; accent-color: #38bdf8; cursor: pointer; height: 8px; border-radius: 4px; }
+        
+        /* Forms and settings */
+        .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+        .input-group { display: flex; flex-direction: column; gap: 4px; }
+        .input-group label { font-size: 11px; color: #64748b; text-transform: uppercase; }
+        input[type=number] { background-color: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 8px; border-radius: 6px; font-size: 14px; font-weight: bold; width: 100%; }
+        input[type=number]:focus { border-color: #38bdf8; outline: none; }
+        
+        /* Buttons */
+        .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 5px; }
+        button { padding: 14px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 14px; transition: 0.2s; color: white; text-transform: uppercase; letter-spacing: 0.5px; }
+        .btn-start { background-color: #10b981; } .btn-start:hover { background-color: #059669; }
+        .btn-stop { background-color: #ef4444; } .btn-stop:hover { background-color: #dc2626; }
+        .btn-save { background-color: #6366f1; grid-column: span 2; margin-top: 5px; padding: 10px; font-size: 12px; }
+        .btn-save:hover { background-color: #4f46e5; }
+        
+        /* Standalone SVG graphic */
+        .chart-container { width: 100%; height: 200px; margin-top: 10px; background: #0f172a; border-radius: 8px; position: relative; border: 1px solid #334155; overflow: hidden; }
+        svg { width: 100%; height: 100%; }
+        polyline { fill: none; stroke: #10b981; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+        .chart-grid { stroke: #1e293b; stroke-width: 1; }
+        .axis-label { font-size: 9px; fill: #475569; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Ultrasonic Control Dashboard</h1>
         
+        <!-- Top row: Status and Timer -->
+        <div class="grid-2">
+            <div class="card" id="statusCard">
+                <h3>System status</h3>
+                <div class="val" id="valStatus">CONNECTION..</div>
+            </div>
+            <div class="card" id="timerCard">
+                <h3>Work timer</h3>
+                <div class="val" id="valTimer">00:00 / 00:00</div>
+            </div>
+        </div>
+
+        <!-- Middle row: Power and Temperature -->
+        <div class="grid-2">
+            <!-- Power control in the "Sollwert / Istwert style" -->
+            <div class="card" id="pwrCard">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3 id="valTargetPwr">Sollwert (Set): 0 %</h3>
+                    <span id="valActualPwr" style="font-size: 14px; font-weight: bold; color: #10b981; background: #0f172a; padding: 2px 8px; border-radius: 4px; border: 1px solid #334155;">Istwert: 0 %</span>
+                </div>
+                <input type="range" id="pwrSlider" min="0" max="100" value="0" oninput="previewPower(this.value)" onchange="applyPower(this.value)">
+            </div>
+            <div class="card" id="tempCard">
+                <h3>Temperature of magnetostrictive transducer</h3>
+                <div class="val" id="valTemp">0.0 °C</div>
+            </div>
+        </div>
+
+        <!-- Main control buttons -->
+        <div class="btn-group">
+            <button class="btn-start" onclick="startSweep()">Scan</button>
+            <button class="btn-stop" onclick="stopGenerator()">Stop generation</button>
+        </div>
+
+        <!-- Generator settings block (Configuration) -->
         <div class="card">
-            <div class="label">Current Resonance Frequency</div>
-            <div id="freq_val" class="value">0 Hz</div>
+            <h3>Scanning parameters and limits</h3>
+            <div class="config-grid">
+                <div class="input-group">
+                    <label>Nominal (Hz)</label>
+                    <input type="number" id="cfgNom" value="35000">
+                </div>
+                <div class="input-group">
+                    <label>Scan start (Hz)</label>
+                    <input type="number" id="cfgStart" value="50000">
+                </div>
+                <div class="input-group">
+                    <label>Stop scan (Hz)</label>
+                    <input type="number" id="cfgEnd" value="25000">
+                </div>
+                <div class="input-group">
+                    <label>Frequency step (Hz)</label>
+                    <input type="number" id="cfgStep" value="100">
+                </div>
+                <div class="input-group">
+                    <label>Time limit (sec)</label>
+                    <input type="number" id="cfgTime" value="60">
+                </div>
+                <div class="input-group">
+                    <label>Target temp. (°C)</label>
+                    <input type="number" id="cfgTargetTemp" step="0.1" value="25.0">
+                </div>
+                <button class="btn-save" onclick="saveConfig()">Save and upload configuration</button>
+            </div>
         </div>
 
+        <!-- Cavitation resonance graph -->
         <div class="card">
-            <div class="label">Hydrophone Feedback (RMS)</div>
-            <div id="rms_val" class="value">0.0000</div>
+            <h3>Cavitation noise spectrum (RMS hydrophone)</h3>
+            <div class="chart-container">
+                <svg id="svgChart" viewBox="0 0 500 150" preserveAspectRatio="none">
+                    <!-- Horizontal level grid -->
+                    <line x1="0" y1="37.5" x2="500" y2="37.5" class="chart-grid" />
+                    <line x1="0" y1="75" x2="500" y2="75" class="chart-grid" />
+                    <line x1="0" y1="112.5" x2="500" y2="112.5" class="chart-grid" />
+                    
+                    <!-- Vertical grid -->
+                    <line x1="125" y1="0" x2="125" y2="150" class="chart-grid" />
+                    <line x1="250" y1="0" x2="250" y2="150" class="chart-grid" />
+                    <line x1="375" y1="0" x2="375" y2="150" class="chart-grid" />
+                    
+                    <!-- Text labels of levels (for clarity) -->
+                    <text x="5" y="32" class="axis-label">75%</text>
+                    <text x="5" y="70" class="axis-label">50%</text>
+                    <text x="5" y="107" class="axis-label">25%</text>
+
+                    <!-- Dynamic trend line -->
+                    <polyline id="chartLine" points=""></polyline>
+                </svg>
+            </div>
         </div>
 
-        <div class="slider-container">
-            <div class="label">Generator Power Level: <span id="power_txt">50</span>%</div>
-            <input type="range" id="power_slider" min="0" max="100" value="50" oninput="updatePower(this.value)">
-        </div>
-
-        <button class="btn" id="scan_btn" onclick="triggerScan()">START CAVITATION SCAN</button>
-
-        <!-- Native high-performance SVG chart instead of Chart.js -->
-        <svg id="chart" width="560" height="200" viewBox="0 0 560 200">
-            <polyline id="grid" points="0,150 560,150" stroke="#333" stroke-width="1" stroke-dasharray="5,5"/>
-            <polyline id="sparkline" points=""></polyline>
-        </svg>
     </div>
 
     <script>
-        let gateway = `ws://${window.location.hostname}/ws`;
-        let websocket;
-        let isWebUpdating = false;
-        let points = [];
-        const maxPoints = 50;
+        var websocket;
+        var lastPreviewTime = 0;
+        var scanData = []; 
+        const MAX_POINTS = 120; // Limitation of 120 points, as was in Chart.js
 
         function initWebSocket() {
-            websocket = new WebSocket(gateway);
-            websocket.onmessage = onMessage;
-        }
-
-        function onMessage(event) {
-            let data = JSON.parse(event.data);
-            if (data.freq) document.getElementById('freq_val').innerText = data.freq + " Hz";
-            if (data.rms) {
-                document.getElementById('rms_val').innerText = data.rms;
-                updateChart(parseFloat(data.rms));
-            }
-            if (data.power && !isWebUpdating) {
-                document.getElementById('power_slider').value = data.power;
-                document.getElementById('power_txt').innerText = data.power;
-            }
-        }
-
-        function updatePower(val) {
-            isWebUpdating = true;
-            document.getElementById('power_txt').innerText = val;
-            websocket.send(JSON.stringify({'power': parseInt(val)}));
-            setTimeout(() => { isWebUpdating = false; }, 200); // Prevent echo feedback loop
-        }
-
-        function triggerScan() {
-            websocket.send(JSON.stringify({'cmd': 'scan'}));
-        }
-
-        function updateChart(val) {
-            points.push(val);
-            if (points.length > maxPoints) points.shift();
+            websocket = new WebSocket('ws://' + window.location.hostname + '/ws');
             
-            let maxVal = Math.max(...points, 1.0);
-            let svgPoints = "";
-            let stepX = 560 / (maxPoints - 1);
+            websocket.onopen = function() { 
+                document.getElementById('valStatus').innerHTML = "CONNECTION OK"; 
+            };
             
-            for (let i = 0; i < points.length; i++) {
-                let x = i * stepX;
-                // Scale value to fit 200px height SVG (inverted Y-axis in SVG)
-                let y = 180 - ((points[i] / maxVal) * 160);
-                svgPoints += `${x},${y} `;
+            websocket.onclose = function() { 
+                document.getElementById('valStatus').innerHTML = "DISABLED";
+                setTimeout(initWebSocket, 2000); 
+            };
+            
+            websocket.onmessage = function(event) {
+                var data = JSON.parse(event.data);
+                
+                // Updating basic parameters
+                document.getElementById('valStatus').innerHTML = data.status;
+                document.getElementById('valTemp').innerHTML = Number(data.temp).toFixed(1) + " °C";
+                
+                if(data.timer) {
+                    document.getElementById('valTimer').innerHTML = data.timer;
+                }
+                
+                // Synchronize the slider with a physical encoder (only works when the mouse is released)
+                var slider = document.getElementById('pwrSlider');
+                var targetLabel = document.getElementById('valTargetPwr');
+                
+                if (slider && !slider.classList.contains('changed')) {
+                    slider.value = data.target_pwr;
+                    targetLabel.innerHTML = "Power setting: " + data.target_pwr + " %";
+                }
+                
+                // Changing the color of cards in case of an accident
+                var statusCard = document.getElementById('statusCard');
+                if (statusCard) {
+                    if (data.status.includes("ALARM") || data.status === "CRITICAL_FREEZE" || data.status.includes("STOP")) {
+                        statusCard.classList.add('alarm');
+                    } else { statusCard.classList.remove('alarm'); }
+                }
+
+                var tempCard = document.getElementById('tempCard');
+                if (tempCard) {
+                    if (Number(data.temp) < 3.0 || Number(data.temp) > 75.0) { tempCard.classList.add('alarm'); }
+                    else { tempCard.classList.remove('alarm'); }
+                }
+                / Collect points while scanning the STM frequency
+                // Check scan_freq or freq depending on what the STM sends
+                var currentFreq = Number(data.scan_freq) > 0 ? Number(data.scan_freq) : Number(data.freq);
+                var currentRms = Number(data.scan_rms) > 0 ? Number(data.scan_rms) : Number(data.rms);
+                
+                if (data.status === "SCANNING" && currentFreq > 0) {
+                    scanData.push({ f: currentFreq, rms: currentRms });
+                    if (scanData.length > MAX_POINTS) { 
+                        scanData.shift(); 
+                    }
+                    renderSvgChart();
+                }
+
+                // --- UPDATED STATUS AND POWER LOGIC ---
+                var slider = document.getElementById('pwrSlider');
+                var targetLabel = document.getElementById('valTargetPwr');
+                var actualLabel = document.getElementById('valActualPwr');
+                var pwrCard = document.getElementById('pwrCard');
+                var statusValue = document.getElementById('valStatus');
+
+                // 1. We display the status and the current generation frequency in the main card
+                if (statusValue) {
+                    var freqKhz = (Number(data.freq) / 1000).toFixed(2);
+                    statusValue.innerHTML = data.status + `<div style="font-size: 16px; color: #94a3b8; font-weight: normal; margin-top: 4px;">F_output: ${freqKhz} kHz</div>`;
+                }
+
+                // 2. We derive the actual current power from the power section (Istwert)
+                if (actualLabel) {
+                    actualLabel.innerHTML = "Istwert: " + data.pwr + " %";
+                }
+
+                // 3. If the user is NOT DRAGGING the slider with the mouse right now
+                if (slider && !slider.classList.contains('changed')) {
+                    slider.value = data.target_pwr;
+                    targetLabel.innerHTML = "Sollwert: " + data.target_pwr + " %";
+                    targetLabel.classList.remove('warn');
+                    
+                    //If the actual power has reached the specified value, remove the yellow waiting frame.
+                    if (Number(data.pwr) === Number(data.target_pwr)) {
+                        pwrCard.classList.remove('changed');
+                    } else {
+                        // Power is still in the process of changing (soft start/braking)
+                        pwrCard.classList.add('changed');
+                    }
+                }
+            };
+        }
+
+        // Offline vector rendering
+        function renderSvgChart() {
+            if (scanData.length === 0) return;
+            
+            var maxRms = Math.max(...scanData.map(d => d.rms));
+            if (maxRms === 0) maxRms = 1;
+            
+            var pointsStr = "";
+            for (var i = 0; i < scanData.length; i++) {
+                var x = (i / (scanData.length > 1 ? scanData.length - 1 : 1)) * 500;
+                var y = 150 - ((scanData[i].rms / maxRms) * 125); // leave a gap at the top
+                pointsStr += x.toFixed(1) + "," + y.toFixed(1) + " ";
             }
-            document.getElementById('sparkline').setAttribute('points', svgPoints);
+            document.getElementById('chartLine').setAttribute("points", pointsStr);
+        }
+
+        // While dragging (The word "Waiting" appears ONLY HERE)
+        function previewPower(val) {
+            document.getElementById('valTargetPwr').innerHTML = "Sollwert (Waiting): " + val + " %";
+            document.getElementById('valTargetPwr').classList.add('warn');
+            document.getElementById('pwrCard').classList.add('changed');
+            document.getElementById('pwrSlider').classList.add('changed'); // Blocking slider overwriting from WebSocket
+            
+            var now = Date.now();
+            if (now - lastPreviewTime > 50) {
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send("PREVIEW_PWR:" + val);
+                }
+                lastPreviewTime = now;
+            }
+        }
+
+        // Release the mouse/finger (Remove the lock, send the command)
+        function applyPower(val) {
+            document.getElementById('pwrSlider').classList.remove('changed'); // Allow WebSocket to update the slider
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send("PREVIEW_PWR:" + val);
+                setTimeout(function() { 
+                    websocket.send("APPLY_PWR"); 
+                }, 10);
+            }
+        }
+
+        function startSweep() {
+            scanData = [];
+            document.getElementById('chartLine').setAttribute("points", "");
+            if (websocket && websocket.readyState === WebSocket.OPEN) { 
+                websocket.send("START_SWEEP"); 
+            }
+        }
+
+        function stopGenerator() {
+            if (websocket && websocket.readyState === WebSocket.OPEN) { 
+                websocket.send("STOP_GEN"); 
+            }
+        }
+
+        function saveConfig() {
+            var msg = "SET_CONFIG:" + 
+                      document.getElementById('cfgNom').value + "," + 
+                      document.getElementById('cfgStart').value + "," + 
+                      document.getElementById('cfgEnd').value + "," + 
+                      document.getElementById('cfgStep').value + "," + 
+                      document.getElementById('cfgTime').value + "," + 
+                      document.getElementById('cfgTargetTemp').value;
+                      
+            if (websocket && websocket.readyState === WebSocket.OPEN) { 
+                websocket.send(msg); 
+            }
         }
 
         window.onload = initWebSocket;
@@ -111,4 +325,4 @@ const char index_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-#endif /* __WEB_PAGE_H */
+#endif
