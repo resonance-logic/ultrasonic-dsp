@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_it.h"
+#include "esp_link.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -218,24 +219,20 @@ void USART1_IRQHandler(void)
   */
 void UART4_IRQHandler(void)
 {
-  /* USER CODE BEGIN UART4_IRQn 0 */
-
-  /* USER CODE END UART4_IRQn 0 */
-  HAL_UART_IRQHandler(&huart4);
-  /* USER CODE BEGIN UART4_IRQn 1 */
-
-  /* USER CODE END UART4_IRQn 1 */
+    HAL_UART_IRQHandler(&huart4);
+    /* Forward the execution to our custom ring-buffer ISR */
+    ESP_Link_RxISR(&huart4);
 }
 
 /* USER CODE BEGIN 1 */
-// Внешний хэндл ADC2, чтобы прерывание знало, чьи флаги сбрасывать
+// External ADC2 handle so that the interrupt knows whose flags to reset
 extern ADC_HandleTypeDef hadc2;
 
-// Аппаратный обработчик прерывания DMA2 Поток 2 (привязан к ADC2)
+// Hardware interrupt handler DMA2 Thread 2 (tied to ADC2)
 void DMA2_Stream2_IRQHandler(void)
 {
-  // HAL сам определит, какая половина буфера заполнилась,
-  // очистит флаги и вызовет наши коллбеки в hydrophone.c
+  // HAL itself will determine which half of the buffer is full,
+  // will clear the flags and call our callbacks in hydrophone.c
   HAL_DMA_IRQHandler(hadc2.DMA_Handle);
 }
 

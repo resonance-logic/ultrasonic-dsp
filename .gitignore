@@ -56,3 +56,6 @@ Icon?
 *.xlsx
 dumps/
 logs/
+
+# Ignore local automation scripts
+translate_comments.py

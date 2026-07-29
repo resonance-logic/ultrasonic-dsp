@@ -1,93 +1,69 @@
 #include "esp_link.h"
-#include "sweep.h"
-#include "hydrophone.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdarg.h>
 
-// ИСПРАВЛЕНО: берем хэндл, который CubeMX уже создал в main.c, а не плодим копии
-extern UART_HandleTypeDef huart1;
-extern UART_HandleTypeDef huart4; // ИСПРАВЛЕНО: переключаемся на четвертый порт
+ESP_Link_TypeDef g_esp_link;
 
-static uint8_t rx_byte;
-static char rx_buffer[64];
+static char rx_buffer[RX_BUFFER_SIZE];
 static uint8_t rx_index = 0;
+static uint8_t rx_byte = 0;
 
-// Ссылка на внешнюю переменную состояния силовой части из main.c
-extern volatile uint32_t device_state;
-
-// Инициализация связи (вызывать один раз в main.c)
-void esp_link_init(void) {
-    memset(rx_buffer, 0, sizeof(rx_buffer));
+/* Initialize the communication link and enable interrupts */
+void ESP_Link_Init(void) {
+    memset(&g_esp_link, 0, sizeof(g_esp_link));
+    g_esp_link.power_level = 50; // Default power level
     rx_index = 0;
-    HAL_UART_Receive_IT(&huart4, &rx_byte, 1); // ИСПРАВЛЕНО
+
+    /* Start the non-blocking interrupt-driven reception of the first byte */
+    HAL_UART_Receive_IT(&huart4, &rx_byte, 1);
 }
 
-// Отправка текстового пакета в ESP32
-void esp_link_send_packet(const char* format, ...) {
-    char tx_buf[64];
-    va_list args;
-    va_start(args, format);
-    int len = vsnprintf(tx_buf, sizeof(tx_buf), format, args);
-    va_end(args);
+/* Interrupt Service Routine (ISR) Callback - called automatically on every byte received */
+void ESP_Link_RxISR(UART_HandleTypeDef *huart) {
+    if (huart->Instance == UART4) {
+        /* Check boundary to prevent buffer overflow */
+        if (rx_index < (RX_BUFFER_SIZE - 1)) {
+            /* Start of packet reached - reset index just in case */
+            if (rx_byte == '$') {
+                rx_index = 0;
+            }
 
-    if (len > 0) {
-        HAL_UART_Transmit(&huart4, (uint8_t*)tx_buf, len, 10); // ИСПРАВЛЕНО
+            rx_buffer[rx_index++] = (char)rx_byte;
+
+            /* End of packet reached */
+            if (rx_byte == ';') {
+                rx_buffer[rx_index] = '\0'; // Null-terminate string
+                g_esp_link.packet_ready = 1;
+            }
+        } else {
+            rx_index = 0; // Overflow safety reset
+        }
+
+        /* Re-arm interrupt for the next incoming byte */
+        HAL_UART_Receive_IT(&huart4, &rx_byte, 1);
     }
 }
 
-// Исправленный парсер входящих сообщений от ESP32
-void esp_link_parse_command(char* cmd) {
-    // ИСПРАВЛЕНО: ESP32 присылает команды с префиксом "$", например "$SET,PWR,45;"
-    // Проверяем команду установки параметров
-    if (strncmp(cmd, "$SET,PWR,", 9) == 0) {
-        uint32_t pwr_val = atoi(cmd + 9);
-
-        // Добавляем ЭХО-ответ для верификации связи в мониторе порта ESP32
-        esp_link_send_packet("ECHO:PWR_SET_TO_%lu\r\n", pwr_val);
-
-        // Вызов вашей функции изменения скважности (в sweep.c)
-        sweep_set_pwm_duty((uint8_t)pwr_val);
+/* Non-blocking main loop parser */
+void ESP_Link_Process(void) {
+    if (!g_esp_link.packet_ready) {
+        return; // No new packet, exit instantly
     }
-    else if (strncmp(cmd, "$SET,SWP,", 9) == 0) {
-        uint32_t val1 = 0, val2 = 0, val3 = 0;
-        if (sscanf(cmd + 9, "%lu,%lu,%lu", &val1, &val2, &val3) == 3) {
-            sweep_config.freq_start = val1;
-            sweep_config.freq_end = val2;
-            sweep_config.freq_step = val3;
 
-            esp_link_send_packet("ECHO:SWEEP_CONFIRMED:%lu->%lu,STEP:%lu\r\n", val1, val2, val3);
-
-            // Переводим систему в режим сканирования
-            current_sweep_state = SWEEP_IN_PROGRESS;
+    /* Format expected: $SCAN,1; or $POWER,50; */
+    if (strncmp(rx_buffer, "$SCAN,", 6) == 0) {
+        g_esp_link.scan_active = (uint8_t)atoi(&rx_buffer[6]);
+    } 
+    else if (strncmp(rx_buffer, "$POWER,", 7) == 0) {
+        uint32_t val = (uint32_t)atoi(&rx_buffer[7]);
+        if (val <= 100) {
+            g_esp_link.power_level = val;
+            /* TODO: Update your TIM1 PWM duty cycle registers here based on power level */
         }
     }
-    else if (strncmp(cmd, "$SET,TMP,", 9) == 0) {
-        uint32_t temp_val = atoi(cmd + 9);
-        esp_link_send_packet("ECHO:TEMP_LIMIT_%lu_OK\r\n", temp_val);
-        // Здесь можно сохранить уставку температуры в вашу структуру контроля
-    }
-    // ГРУППА 2: ЗАПРОСЫ СОСТОЯНИЯ (PULL ОТ ESP32)
-    else if (strcmp(cmd, "$GET,SYS;") == 0 || strcmp(cmd, "$GET,SYS") == 0) {
-        esp_link_send_packet("$SYS,%lu,%lu,%d;\r\n",
-                             TIM1->ARR,
-                             device_state,
-                             sweep_config.sweep_delay_ms);
-    }
-}
 
-// Аппаратный колбэк прерывания UART1
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == UART4) { // ИСПРАВЛЕНО: ловим прерывание от UART4
-        if (rx_index >= 63) rx_index = 0;
-        rx_buffer[rx_index++] = (char)rx_byte;
-
-        if (rx_byte == ';') {
-            rx_buffer[rx_index] = '\0';
-            esp_link_parse_command(rx_buffer);
-            rx_index = 0;
-        }
-        HAL_UART_Receive_IT(huart, &rx_byte, 1);
-    }
+    /* Clear flag and buffer for the next transaction */
+    g_esp_link.packet_ready = 0;
+    rx_index = 0;
 }

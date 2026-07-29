@@ -12,7 +12,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include <stdlib.h> // Для работы функции abs()
+#include <stdlib.h> // For the abs() function to work
 #include "arm_math.h"
 #include "hydrophone.h"
 #include "sweep.h"
@@ -27,21 +27,21 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #ifndef TIM_CHANNEL_1
-#define TIM_CHANNEL_1 0x00000000U // Канал 1 ШИМ
+#define TIM_CHANNEL_1 0x00000000U // Channel 1 PWM
 #endif
 #ifndef TIM_CHANNEL_2
-#define TIM_CHANNEL_2 0x00000004U // Канал 2 ШИМ
+#define TIM_CHANNEL_2 0x00000004U // Channel 2 PWM
 #endif
-// Состояния автомата перегрузки
+// Overload circuit breaker states
 #define STATE_SCAN   0U
 #define STATE_READY  1U
 #define STATE_ALARM  2U
-// Настройки для MOD-ACS712-20A с делителем 1к/2к
-// Виртуальный ноль АЦП (~1.66 В на пине WeAct при 0 Ампер). Подстроите после теста с ЛБП!
+// Settings for MOD-ACS712-20A with 1k/2k divider
+// Virtual zero of the ADC (~1.66 V on the WeAct pin at 0 Ampere). Adjust after the LBP test!
 #define ACS712_ZERO_LEVEL   1987U
-#define CURRENT_ALARM_STEP  500U  // Отклонение от нуля более чем на ~500 единиц АЦП (~4.5 Ампера)
+#define CURRENT_ALARM_STEP  500U  // Deviation from zero by more than ~500 ADC units (~4.5 Amperes)
 
-#define BUFFER_SIZE 512 // Размер полубуфера для обработки (размер окна RMS)
+#define BUFFER_SIZE 512 // Processing half-buffer size (RMS window size)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,31 +54,31 @@ ADC_HandleTypeDef hadc1;
 ADC_HandleTypeDef hadc2;
 
 TIM_HandleTypeDef htim1;
-TIM_HandleTypeDef htim2; // <-- ДОБАВИТЬ СТРОКУ
-UART_HandleTypeDef huart4; // Заодно объявляем наш UART4
+TIM_HandleTypeDef htim2; // <-- ADD ROW
+UART_HandleTypeDef huart4; // At the same time we announce our UART4
 
-//UART_HandleTypeDef huart4;
+// UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
-// Пробное объявление структуры режекторного фильтра для проверки линковки
+// Test declaration of a notch filter structure to test linking
 arm_biquad_casd_df1_inst_f32 test_notch_structure;
 
 arm_biquad_casd_df1_inst_f32 notch_filter_inst;
-float32_t notch_state[4]; // Состояние фильтра (2 каскада/задержки)
-float32_t biquad_coeffs[5]; // Массив коэффициентов: {b0, b1, b2, -a1, -a2}
+float32_t notch_state[4]; // Filter state (2 stages/delay)
+float32_t biquad_coeffs[5]; // Coefficients array: {b0, b1, b2, -a1, -a2}
 
-/* Переменные для автоматического поиска акустического резонанса */
-uint32_t best_resonance_freq = 0; // Сюда запишется лучшая частота кавитации
-uint32_t max_noise_amplitude = 0; // Пиковый уровень шума
-// Переменные для рабочего цикла контроля
+/* Variables for automatic search for acoustic resonance */
+uint32_t best_resonance_freq = 0; // The best cavitation frequency will be written here
+uint32_t max_noise_amplitude = 0; // Peak noise level
+// Variables for control duty cycle
 uint32_t raw_current = 0;
 uint32_t raw_noise_voltage = 0;
 int32_t noise_delta = 0;
-int32_t current_delta = 0;        // Реальное отклонение тока от нуля ACS
+int32_t current_delta = 0;        // Real current deviation from zero ACS
 
-uint8_t device_state = STATE_SCAN; // Стартуем всегда с режима сканирования
+uint8_t device_state = STATE_SCAN; // We always start from the scanning mode
 
 
 float32_t dsp_input[BUFFER_SIZE];
@@ -88,7 +88,7 @@ char rx_byte;
 char rx_buffer[64];
 uint8_t rx_index = 0;
 
-// Переменная для тайминга отправки живой телеметрии в ESP32
+// Variable for timing the sending of live telemetry to the ESP32
 uint32_t last_live_telemetry_tick = 0;
 
 /* USER CODE END PV */
@@ -99,12 +99,10 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_USART1_UART_Init(void);
 static void MX_UART4_Init(void);
 /* USER CODE BEGIN PFP */
 void MX_TIM2_Init(void);
-void MX_DMA_Init(void);         // Добавить прототип
-void MX_USART1_UART_Init(void); // Добавить прототип
+void MX_DMA_Init(void);         // Add a prototype
 void Set_US_Frequency_And_Power(uint32_t freq_hz, uint32_t power_percent);
 void Scan_Magnetostrictive_Resonance(void);
 /* USER CODE END PFP */
@@ -122,12 +120,12 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-	// Проверка включения FPU на уровне ядра Cortex-M4
-	// Регистр CPACR (Copsocessor Access Control Register) должен разрешать полный доступ к CP10 и CP11
+	// Checking FPU enablement at the Cortex-M4 core level
+	// The CPACR (Copsocessor Access Control Register) register must allow full access to CP10 and CP11
 	if ((SCB->CPACR & (0xF << 20)) == 0) {
-	    // Если мы здесь, FPU выключен на уровне железа!
-	    // Обычно HAL_Init() включает его сам через SystemInit(),
-	    // но если этого не произошло, принудительно активируем:
+	    // If we are here, the FPU is turned off at the hardware level!
+	    // Usually HAL_Init() enables it itself via SystemInit(),
+	    // but if this does not happen, forcefully activate:
 	    SCB->CPACR |= ((3UL << 10*2)|(3UL << 11*2));
 	}
   /* USER CODE END 1 */
@@ -153,34 +151,33 @@ int main(void)
   MX_ADC1_Init();
   MX_ADC2_Init();
   MX_TIM1_Init();
-  MX_USART1_UART_Init();
   MX_UART4_Init();
   /* USER CODE BEGIN 2 */
-  // Включаем оба АЦП в циклическом режиме
+  // We turn on both ADCs in cyclic mode
   HAL_ADC_Start(&hadc1);
   HAL_ADC_Start(&hadc2);
 
-  // Запуск прямого (PA8) и инверсного комплементарного (PB13) ШИМ под IR2108
+  // Running direct (PA8) and inverse complementary (PB13) PWM under IR2108
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
 
-  hydrophone_init_filters(50000.0f); // Стартуем фильтр на 50 кГц
+  hydrophone_init_filters(50000.0f); // Starting the filter at 50 kHz
   HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_raw_buffer, BUFFER_SIZE * 2);
   HAL_TIM_Base_Start(&htim2);
-  // Запуск посимвольного приема пакетов от ESP32 через прерывания USART1
-//  esp_link_init();
-  // Вызываем автоматический поиск резонанса на 100% мощности
+  // Starting character-by-character packet reception from ESP32 via USART1 interrupts
+  ESP_Link_Init();
+  // We call an automatic search for resonance at 100% power
   Scan_Magnetostrictive_Resonance();
 
-  // Проверяем: если во время сканирования функция зафиксировала аварию по току
+  // We check: if during scanning the function recorded a current fault
   if (device_state == STATE_ALARM) {
 
-      // Сюда мы позже допишем отправку аварийного сообщения в ESP32 по UART:
+      // Here we will later add sending an emergency message to the ESP32 via UART:
       // Send_UART_Message("STATUS:ALARM_OVERCURRENT");
 
       while(1) {
-          // Программный тупик инициализации. Мост гарантированно выключен.
-          // Отсюда плата выйдет только при физическом сбросе или перезапуске питания.
+          // Software initialization deadlock. The bridge is guaranteed to be off.
+          // From here the board will only come out with a physical reset or power restart.
       }
   }
   /* USER CODE END 2 */
@@ -189,155 +186,105 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	    // === ТЕСТ «ПРЯМОЙ ТОК»: ШЛЕМ ДАННЫЕ В ОБХОД ВСЕХ ПРЕРЫВАНИЙ И ФЛАГОВ ===
-	    // === МАТЕМАТИЧЕСКИ ИСПРАВЛЕННЫЙ ТЕСТ «ПРЯМОЙ ТОК» (БЕЗ ПРЕРЫВАНИЙ) ===
-	    // === 100% НАДЕЖНЫЙ ЦЕЛОЧИСЛЕННЫЙ СИМУЛЯТОР СПЕКТРА (БЕЗ FLOAT И EXPF) ===
-	    // === ТЕСТ «ЖЕЛЕЗНАЯ ПЕТЛЯ»: ОТПРАВЛЯЕМ И ТУТ ЖЕ ПРИНИМАЕМ ИЗ ПРОВОДА ===
-	    // === ТЕСТ «ЧИСТАЯ МЕДЬ» НА ПИНАХ PC10/PC11 ===
-	    static uint32_t test_f1 = 50000;
-	    static uint32_t last_send_tick = 0;
-	    static uint8_t received_byte = 0;
-	    static uint8_t echo_success_flag __attribute__((unused)) = 0; 
+      /* 1. Process commands arriving from ESP32 via Ring Buffer UART4 (Non-blocking) */
+      ESP_Link_Process();
 
-	    if (HAL_GetTick() - last_send_tick >= 50)
-	    {
-	        uint32_t simulated_rms_x10000 = 100;
-	        if (test_f1 >= 31000 && test_f1 <= 34000) {
-	            uint32_t distance = (test_f1 > 32500) ? (test_f1 - 32500) : (32500 - test_f1);
-	            if (distance < 1500) simulated_rms_x10000 = 9500 - (distance * 6);
-	        }
+      /* ==================================================================
+       * 2. EMERGENCY CURRENT PROTECTION (HARDWARE SAFETY CHECK)
+       * ==================================================================
+       * We check the current sensor before each cycle. If the current exceeds the limit,
+       * We instantly turn off the PWM, reset the scanning flag and go into trouble.
+       */
+      // float current_amps = read_current_sensor_amperes();
+      // if (current_amps > TERMINAL_CURRENT_LIMIT_AMPS) {
+      // __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0); // Shutdown PWM
+      // g_esp_link.scan_active = 0;                     // Stop scan
+      // send_emergency_stop_packet_to_esp32();          // Notify Web UI
+      // continue;
+      // }
 
-	        uint32_t rms_int = simulated_rms_x10000 / 10000;
-	        uint32_t rms_frac = simulated_rms_x10000 % 10000;
+      /* ==================================================================
+       * 3. MAIN BUSINESS LOGIC CONTROLLER
+       * ==================================================================
+       */
+      if (g_esp_link.scan_active) 
+      {
+          // ------------------------------------------------------------------
+          // CAVITATION SCAN ACTIVE (FREQUENCY SWEEP & DSP ANALYSIS)
+          // ------------------------------------------------------------------
+          static uint32_t last_sweep_tick = 0;
+          static uint32_t current_frequency = 30000; // Start at 30 kHz
+          
+          /* Non-blocking step frequency sweep (e.g., change frequency every 10ms) */
+          if (HAL_GetTick() - last_sweep_tick >= 10) 
+          {
+              /* Update TIM1 register to set new oscillator frequency */
+              // update_tim1_pwm_frequency(current_frequency);
+              
+              /* Run hardware ADC conversion to sample hydrophone signal */
+              // start_hydrophone_adc_sampling();
+              
+              /* --------------------------------------------------------------
+               * ADVANCED DSP CAVITATION ANALYSIS (CMSIS-DSP NOTCH FILTERING)
+               * --------------------------------------------------------------
+               * To find the true resonance from cavitation noise, we need:
+               * 1. Pass the raw hydrophone signal through a Notch filter configured 
+               *    to `current_frequency` (cut out the main whistling tone).
+               * 2. Pass the remainder through a High-Pass filter (cut out low frequencies).
+               * 3. Calculate the root mean square value of the remaining noise (function arm_rms_f32).
+               */
+              float cavitation_noise_rms = 0.0f;
+              // arm_biquad_cascade_df1_f32(&S_notch, adc_buffer_f32, filtered_buffer_f32, BLOCK_SIZE);
+              // arm_rms_f32(filtered_buffer_f32, BLOCK_SIZE, &cavitation_noise_rms);
+              
+              /* Logic to track the absolute maximum of cavitation_noise_rms */
+              // if (cavitation_noise_rms > max_cavitation_noise) {
+              // max_cavitation_noise = cavitation_noise_rms;
+              // best_resonance_frequency = current_frequency;
+              // }
 
-	        static char test_packet_str[64];
-	        snprintf(test_packet_str, sizeof(test_packet_str), "$LIVE,%lu,%lu.%04lu;\r\n",
-	                 test_f1, rms_int, rms_frac);
+              /* Send REAL DSP telemetry packet to ESP32 Web UI SVG chart every 50ms */
+              static uint32_t last_telemetry_tick = 0;
+              if (HAL_GetTick() - last_telemetry_tick >= 50) 
+              {
+                  char telemetry_str[64];
+                  // Sending current sweeping frequency and calculated pure cavitation noise RMS
+                  snprintf(telemetry_str, sizeof(telemetry_str), "$LIVE,%lu,%.4f;\r\n", 
+                           current_frequency, cavitation_noise_rms);
+                  HAL_UART_Transmit(&huart4, (uint8_t*)telemetry_str, strlen(telemetry_str), 10);
+                  
+                  last_telemetry_tick = HAL_GetTick();
+              }
 
-	        // Очищаем RDR буфер приема
-	        HAL_UART_Receive(&huart4, &received_byte, 1, 0);
+              /* Increment sweep frequency up to 35 kHz, then loop or lock on resonance */
+              current_frequency += 50; 
+              if (current_frequency > 35000) {
+                  current_frequency = 30000; // Reset sweep loop for demo
+                  /* In production: switch to best_resonance_frequency and hold! */
+              }
 
-	        // Отправляем в ножку PC10
-	        HAL_UART_Transmit(&huart4, (uint8_t*)test_packet_str, strlen(test_packet_str), 10);
-
-	        // Читаем из ножки PC11
-	        if (HAL_UART_Receive(&huart4, &received_byte, 1, 5) == HAL_OK) {
-	            if (received_byte == '$' || received_byte == 36) {
-	                echo_success_flag = 1; // ЖЕЛЕЗНЫЙ УСПЕХ НА БОКОВОЙ ГРЕБЕНКЕ!
-	            }
-	        }
-
-	        if (test_f1 > 25000) test_f1 -= 200; else test_f1 = 50000;
-	        last_send_tick = HAL_GetTick();
-	    }
-
-
-
-	    // end test
-
-    // ====================================================================
-    // 1. АППАРАТНАЯ МГНОВЕННАЯ ЗАЩИТА ПО ТОКУ (АВТОНОМНЫЙ АВТОМАТ СОСТОЯНИЙ)
-    // ====================================================================
-    // Этот блок работает всегда на максимальной скорости и защищает IGBT-мост [11:15]
-    if (device_state != STATE_ALARM)
-    {
-        // Считываем текущую дельту тока с аналогового входа PA0 (ADC1) [11:15]
-        // (Используйте вашу исходную переменную вместо 'current_delta')
-        if (current_delta > CURRENT_ALARM_STEP)
-        {
-            // Мгновенно рубим аппаратный противофазный ШИМ на пинах PA8/PA9 [18:02]
-            HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-            HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-
-            // Фиксируем статус аварии (автомат состояний STATE_ALARM) [11:15]
-            device_state = STATE_ALARM;
-
-            // Асинхронно оповещаем ESP32, чтобы Web-интерфейс сразу окрасился в красный
-            esp_link_send_packet("$ALARM,CURRENT_OVERLOAD;\r\n");
-        }
-    }
-
-    // ====================================================================
-    // 2. НЕБЛОКИРУЮЩИЙ АВТОМАТ СКАНИРОВАНИЯ ЧАСТОТЫ «СВЕРХУ ВНИЗ»
-    // ====================================================================
-    // Если от ESP32 пришла команда на сканирование, этот автомат начинает
-    // шагать по частотам, не зависая внутри циклов и не используя HAL_Delay
-    if (device_state != STATE_ALARM)
-    {
-        sweep_step_machine_process();
-    }
-/// begin for test STM32-ESP32
-    // === ПОЛНОСТЬЮ АВТОНОМНЫЙ ТЕСТ СВЯЗИ И ГРАФИКА (СИМУЛЯТОР РЕЗОНАНСА МСП) ===
-    // Объявляем статические переменные прямо внутри while(1), чтобы они сохраняли значения
-    // === БЕЗОПАСНЫЙ НЕБЛОКИРУЮЩИЙ СИМУЛЯТОР РЕЗОНАНСА МСП ===
-    static uint32_t test_f = 50000;
-    static uint8_t test_running = 0;
-    static uint32_t last_test_step_tick = 0; // Неблокирующий таймер шага
-
-    // Перехватываем команду старта сканирования из буфера esp_link
-    if (current_sweep_state == SWEEP_IN_PROGRESS && test_running == 0) {
-        test_f = sweep_config.freq_start;
-        test_running = 1;
-        last_test_step_tick = HAL_GetTick();
-    }
-
-    // Запускаем шаг симуляции строго раз в 20 мс, не останавливая процессор!
-    if (test_running && (HAL_GetTick() - last_test_step_tick >= 20))
-    {
-        // Математическая модель колокола кавитационного резонанса
-        float center_freq = 32500.0f;
-        float bandwidth = 1500.0f;
-        float deviation = ((float)test_f - center_freq) / bandwidth;
-
-        float fake_noise = (float)(rand() % 100) / 2000.0f;
-        float test_rms = expf(-0.5f * deviation * deviation) + fake_noise;
-
-        // 1. Быстрый целочисленный вывод в printf (без зависаний)
-        uint32_t rms_integral = (uint32_t)test_rms;
-        uint32_t rms_fractional = (uint32_t)((test_rms - rms_integral) * 10000);
-        printf("FREQ:%lu,RMS:%lu.%04lu\r\n", test_f, rms_integral, rms_fractional);
-
-        // 2. Отправка пакета в ESP32 по нашему новому USART1 (PA9/PA10)
-        esp_link_send_packet("$LIVE,%lu,%.4f;\r\n", test_f, test_rms);
-
-        // Переходим к следующей частоте "сверху вниз" [11:34]
-        if (test_f > sweep_config.freq_end && test_f > sweep_config.freq_step) {
-            test_f -= sweep_config.freq_step;
-        } else {
-            test_running = 0;
-            current_sweep_state = 0; // Возвращаем автомат в IDLE
-
-            // Сигнализируем ESP32 об успешном окончании сканирования
-            esp_link_send_packet("DONE:RES_FREQ:32500.0,MAX_RMS:0.9500\r\n");
-        }
-
-        // Обновляем метку времени для следующего шага через 20 мс
-        last_test_step_tick = HAL_GetTick();
-    }
-
-/// end for test STM32-ESP32
-    // ====================================================================
-    // 3. ФОНОВАЯ ОБРАБОТКА ГИДРОФОНА И ЖИВАЯ ТЕЛЕМЕТРИЯ ДЛЯ WEB-ИНТЕРФЕЙСА
-    // ====================================================================
-    // Если сканирование завершено или еще не запущено, STM32 продолжает
-    // непрерывно очищать сигнал от силовой частоты и считать RMS кавитации [11:34]
-    if (current_sweep_state == SWEEP_IDLE && device_state != STATE_ALARM)
-    {
-        // Проверяем аппаратный флаг готовности Ping-Pong буфера DMA2 [11:34]
-        if (dma_ready_flag)
-        {
-            // Прогоняем данные через CMSIS-DSP Notch-фильтр и RMS-детектор [11:34]
-            float32_t live_cavitation_noise = hydrophone_process_pipeline();
-
-            // Чтобы не спамить в UART и не грузить ESP32 Web-сервер,
-            // отправляем текущий уровень шума кавитации ровно раз в 250 мс
-            if (HAL_GetTick() - last_live_telemetry_tick >= 250)
-            {
-                esp_link_send_packet("$LIVE,%.4f;\r\n", live_cavitation_noise);
-                last_live_telemetry_tick = HAL_GetTick();
-            }
-        }
-    }
+              last_sweep_tick = HAL_GetTick();
+          }
+      } 
+      else 
+      {
+          // ------------------------------------------------------------------
+          // GENERATOR IDLE SYSTEM SLEEP
+          // ------------------------------------------------------------------
+          // The button in the browser is OFF. Stop PWM generation to prevent heating.
+          __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+          
+          /* Send a flatline idle telemetry packet once per second to notify UI */
+          static uint32_t last_idle_tick = 0;
+          if (HAL_GetTick() - last_idle_tick >= 1000)
+          {
+              char idle_str[32];
+              snprintf(idle_str, sizeof(idle_str), "$LIVE,0,0.0000;\r\n");
+              HAL_UART_Transmit(&huart4, (uint8_t*)idle_str, strlen(idle_str), 10);
+              
+              last_idle_tick = HAL_GetTick();
+          }
+      }
 
     /* USER CODE END WHILE */
 
@@ -612,39 +559,6 @@ static void MX_UART4_Init(void)
 }
 
 /**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART1_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -668,66 +582,66 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-// ИСПРАВЛЕННАЯ И БЕЗОПАСНАЯ функция изменения частоты и мощности
+// FIXED AND SAFE frequency and power change function
 void Set_US_Frequency_And_Power(uint32_t freq_hz, uint32_t power_percent) {
-    // Жесткие рамки по частоте (25-50 кГц) [11:15]
+    // Tight frequency limits (25-50 kHz) [11:15]
     if (freq_hz < 25000 || freq_hz > 50000) return;
     if (power_percent > 100) power_percent = 100;
 
-    // В режиме Center-Aligned частота равна: F_pwm = F_tim / (2 * ARR)
-    // Следовательно, для 168 МГц: ARR = 168 000 000 / (2 * freq_hz) = 84 000 000 / freq_hz
+    // In Center-Aligned mode the frequency is: F_pwm = F_tim / (2 * ARR)
+    // Therefore, for 168 MHz: ARR = 168,000,000 / (2 * freq_hz) = 84,000,000 / freq_hz
     uint32_t new_period = 84000000 / freq_hz;
 
-    // 2. В режиме выравнивания по центру максимальный ультразвуковой меандр (50% заполнения)
-    // достигается, когда регистр сравнения CCR равен ровно половине периода ARR.
+    // 2. In center alignment mode, maximum ultrasonic square wave (50% fill)
+    // is reached when the comparison register CCR is equal to exactly half the ARR period.
     uint32_t max_safe_pulse = new_period / 2;
 
-    // 3. Линейно масштабируем импульс от 0% до максимальных безопасных 50% заполнения
+    // 3. Linearly scale the pulse from 0% to the maximum safe 50% filling
     uint32_t new_pulse = (max_safe_pulse * power_percent) / 100;
 
-    // 4. Защита "снизу": если импульс слишком короткий (меньше аппаратного Dead-Time),
-    // принудительно гасим ШИМ в 0, чтобы затворы не грелись наносекундными иголками.
+    // 4. Protection "from below": if the pulse is too short (less than hardware Dead-Time),
+    // We forcefully turn off the PWM to 0 so that the gates do not heat up with nanosecond needles.
     if (new_pulse < 150) {
         new_pulse = 0;
     }
 
-    // 5. Атомарно обновляем регистры таймера TIM1
+    // 5. Atomically update the TIM1 timer registers
     __HAL_TIM_SET_AUTORELOAD(&htim1, new_period);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_pulse);
 }
 
 
-// Финальная функция автоматического поиска резонанса (ничего не возвращает, меняет device_state)
+// The final function of automatic resonance search (returns nothing, changes device_state)
 void Scan_Magnetostrictive_Resonance(void) {
     max_noise_amplitude = 0;
     best_resonance_freq = 0;
-    device_state = STATE_SCAN; // Выставляем статус: идет сканирование
+    device_state = STATE_SCAN; // Set the status: scanning in progress
 
-    // Запуск прямого ШИМ для верхнего плеча (Пин PA8)
+    // Trigger direct PWM for the upper side (Pin PA8)
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-    // Запуск инверсного ШИМ для нижнего плеча (Пин PB13)
+    // Starting inverse PWM for the lower leg (Pin PB13)
     HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
 
     for (uint32_t freq = 25000; freq <= 50000; freq += 100) {
 
-        // Если авария уже взведена из другого места — мгновенно прерываем поиск
+        // If the emergency has already been triggered from another location, we immediately interrupt the search
         if (device_state == STATE_ALARM) return;
 
         Set_US_Frequency_And_Power(freq, 100);
-        HAL_Delay(15); // Время на раскачку механики МСП
+        HAL_Delay(15); // Time to pump up the SME mechanics
 
-        // Быстрая проверка защиты во время сканирования под ACS712
+        // Quick security check during scanning under ACS712
         int32_t scan_current_delta = abs((int32_t)HAL_ADC_GetValue(&hadc1) - ACS712_ZERO_LEVEL);
         if (scan_current_delta > CURRENT_ALARM_STEP) {
-        	// Стоп прямого ШИМ для верхнего плеча (Пин PA8)
+        	// Stop direct PWM for the upper arm (Pin PA8)
         	HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-        	// Стоп инверсного ШИМ для нижнего плеча (Пин PB13)
+        	// Stop inverse PWM for the lower leg (Pin PB13)
         	HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
-            device_state = STATE_ALARM; // Переключаем автомат в режим АВАРИИ
-            return; // Досрочно выходим из функции сканирования
+            device_state = STATE_ALARM; // Switch the machine to EMERGENCY mode
+            return; // Exiting the scanning function early
         }
 
-        // Накопление 16 замеров гладкой огибающей с детектора TL072
+        // Accumulation of 16 smooth envelope measurements from the TL072 detector
         uint32_t noise_sum = 0;
         for (int i = 0; i < 16; i++) {
             noise_sum += HAL_ADC_GetValue(&hadc2);
@@ -735,23 +649,23 @@ void Scan_Magnetostrictive_Resonance(void) {
         }
         uint32_t average_noise_delta = noise_sum / 16;
 
-        // Фиксируем пик акустического отклика кавитации
+        // We record the peak of the acoustic response of cavitation
         if (average_noise_delta > max_noise_amplitude) {
             max_noise_amplitude = average_noise_delta;
             best_resonance_freq = freq;
         }
     }
 
-    // Если всё сканирование успешно завершилось и аварии по току не произошло
+    // If all scanning was completed successfully and no current fault occurred
     if (device_state != STATE_ALARM) {
         if (best_resonance_freq >= 25000 && best_resonance_freq <= 50000) {
             Set_US_Frequency_And_Power(best_resonance_freq, 100);
-            device_state = STATE_READY; // Переходим в рабочий режим постоянной генерации!
+            device_state = STATE_READY; // Let's switch to continuous generation operating mode!
         } else {
-            // Если кавитация вообще не найдена во всем диапазоне — выключаем мост от греха подальше
-        	// Стоп прямого ШИМ для верхнего плеча (Пин PA8)
+            // If cavitation is not found at all in the entire range, turn off the bridge out of harm’s way
+        	// Stop direct PWM for the upper arm (Pin PA8)
         	HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-        	// Стоп инверсного ШИМ для нижнего плеча (Пин PB13)
+        	// Stop inverse PWM for the lower leg (Pin PB13)
         	HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
             device_state = STATE_READY;
         }
@@ -760,12 +674,12 @@ void Scan_Magnetostrictive_Resonance(void) {
 
 void MX_DMA_Init(void)
 {
-  /* Включаем тактирование контроллера DMA2 */
+  /* Enable DMA2 controller clocking */
   __HAL_RCC_DMA2_CLK_ENABLE();
 
-  /* Настройка приоритетов прерываний DMA2 для корректной работы с ADC2 */
-  /* Поток 2 (Stream 2) отвечает за сбор данных с ADC2 */
-  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0); // Высокий приоритет для DSP-буфера
+  /* Setting DMA2 interrupt priorities for correct operation with ADC2 */
+  /* Stream 2 is responsible for collecting data from ADC2 */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0); // High priority for DSP buffer
   HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 }
 
@@ -776,7 +690,7 @@ void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 900 - 1; // 180 МГц / 900 = 200 кГц дискретизации гидрофона
+  htim2.Init.Period = 900 - 1; // 180 MHz / 900 = 200 kHz hydrophone sampling
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   HAL_TIM_Base_Init(&htim2);
@@ -785,14 +699,14 @@ void MX_TIM2_Init(void)
   HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig);
 
   /* === ЗАМЕНА НА ПРЯМУЮ НАСТРОЙКУ РЕГИСТРОВ === */
-  // Устанавливаем биты MMS (Master Mode Selection) в значение 010 (Update event)
-  // Это заставит TIM2 выдавать триггер TRGO для ADC2 на каждом обновлении счетчика
-  TIM2->CR2 &= ~TIM_CR2_MMS; // Сброс бит
-  TIM2->CR2 |= TIM_CR2_MMS_1; // Выбор события Update (MMS = 0x20)
+  // Set the MMS (Master Mode Selection) bits to 010 (Update event)
+  // This will cause TIM2 to issue a TRGO trigger to ADC2 on every counter update
+  TIM2->CR2 &= ~TIM_CR2_MMS; // Reset bits
+  TIM2->CR2 |= TIM_CR2_MMS_1; // Select Event Update (MMS = 0x20)
 }
 
 
-// Динамический расчет коэффициентов режекторного фильтра
+// Dynamic calculation of notch filter coefficients
 void update_notch_coefficients(float32_t f_pwm, float32_t f_s, float32_t bandwidth) {
     float32_t omega = 2.0f * PI * f_pwm / f_s;
     float32_t omega_bw = 2.0f * PI * bandwidth / f_s;
@@ -803,41 +717,41 @@ void update_notch_coefficients(float32_t f_pwm, float32_t f_s, float32_t bandwid
     biquad_coeffs[0] = 1.0f / a0;              // b0
     biquad_coeffs[1] = (-2.0f * cos_w) / a0;    // b1
     biquad_coeffs[2] = 1.0f / a0;              // b2
-    biquad_coeffs[3] = (2.0f * cos_w) / a0;     // -a1 (CMSIS использует инвертированные знаки для 'a')
+    biquad_coeffs[3] = (2.0f * cos_w) / a0;     // -a1 (CMSIS uses inverted characters for 'a')
     biquad_coeffs[4] = -(1.0f - alpha) / a0;    // -a2
 
-    // Сброс состояния фильтра во избежание переходных процессов при смене частоты
+    // Resetting the filter state to avoid transients when changing frequency
     arm_biquad_cascade_df1_init_f32(&notch_filter_inst, 1, biquad_coeffs, notch_state);
 }
 
 
-// Вызывается в основном суперцикле background-процесса
+// Called in the main superloop of the background process
 float32_t process_hydrophone_data(void) {
     float32_t rms_value = 0.0f;
 
     if (dma_ready_flag) {
-        // 1. Преобразование типов и центрирование сигнала (убираем DC Offset 1.65В ~ 2048 отсчетов)
+        // 1. Type conversion and signal centering (remove DC Offset 1.65V ~ 2048 counts)
         for (int i = 0; i < BUFFER_SIZE; i++) {
             dsp_input[i] = ((float32_t)dma_buffer_pointer[i] - 2048.0f) / 2048.0f;
         }
 
-        // 2. Фильтрация основной частоты ШИМ
+        // 2. Filtering the main PWM frequency
         arm_biquad_cascade_df1_f32(&notch_filter_inst, dsp_input, dsp_output, BUFFER_SIZE);
 
-        // 3. Вычисление RMS белого кавитационного шума (огибающая)
+        // 3. Calculation of RMS white cavitation noise (envelope)
         arm_rms_f32(dsp_output, BUFFER_SIZE, &rms_value);
 
         dma_ready_flag = 0;
     }
-    return rms_value; // Возвращаем текущий уровень кавитации
+    return rms_value; // Returning the current cavitation level
 }
 
 void set_pwm_frequency(uint32_t freq) {
-    // В Center-Aligned режиме: ARR = F_clk / (2 * F_pwm)
+    // In Center-Aligned mode: ARR = F_clk / (2 * F_pwm)
     uint32_t arr_value = 180000000 / (2 * freq);
     TIM1->ARR = arr_value;
 
-    // Пересчет скважности (50% заполнение с учетом Dead-Time)
+    // Recalculation of duty cycle (50% filling taking into account Dead-Time)
     TIM1->CCR1 = arr_value / 2;
     TIM1->CCR2 = arr_value / 2;
 }
@@ -848,16 +762,16 @@ void run_frequency_sweep(void) {
 
     for (uint32_t current_f = sweep_config.freq_start; current_f >= sweep_config.freq_end; current_f -= sweep_config.freq_step) {
 
-        // 1. Адаптивно перестраиваем режекторный фильтр под новую частоту ШИМ
+        // 1. Adaptively rebuild the notch filter to the new PWM frequency
         update_notch_coefficients((float32_t)current_f, 200000.0f, 200.0f);
 
-        // 2. Устанавливаем генерацию на МСП
+        // 2. Install generation at SMEs
         set_pwm_frequency(current_f);
 
-        // Даем время на переходные процессы в контуре
+        // We give time for transient processes in the circuit
         HAL_Delay(sweep_config.sweep_delay_ms);
 
-        // 3. Измеряем уровень кавитации (пропускаем несколько буферов для стабильности)
+        // 3. We measure the level of cavitation (we skip several buffers for stability)
         float32_t current_rms = 0;
         for(int j=0; j<4; j++) {
             while(!dma_ready_flag);
@@ -865,25 +779,25 @@ void run_frequency_sweep(void) {
         }
         current_rms /= 4.0f;
 
-        // 4. Логируем данные для отправки на ESP32 (график)
-        // Быстрая и легкая альтернатива без использования _printf_float
-        uint32_t rms_integral = (uint32_t)current_rms;                             // Целая часть
-        uint32_t rms_fractional = (uint32_t)((current_rms - rms_integral) * 10000); // 4 знака дроби
+        // 4. Log the data to be sent to the ESP32 (graph)
+        // Fast and easy alternative without using _printf_float
+        uint32_t rms_integral = (uint32_t)current_rms;                             // Whole part
+        uint32_t rms_fractional = (uint32_t)((current_rms - rms_integral) * 10000); // 4 fraction signs
 
-        // Выводим через обычные целые числа %lu. Паддинг %04lu сохранит ведущие нули (например, 0.0045)
+        // We output using ordinary integers %lu. Padding %04lu will retain leading zeros (e.g. 0.0045)
         printf("FREQ:%lu,RMS:%lu.%04lu\r\n", current_f, rms_integral, rms_fractional);
 
-        // 5. Поиск максимума (механический резонанс кавитации)
+        // 5. Search for maximum (mechanical resonance of cavitation)
         if (current_rms > max_cavitation_rms) {
             max_cavitation_rms = current_rms;
             best_freq = current_f;
         }
 
-        // Аварийный выход, если сработал автомат токовой защиты (задача из текущего статуса)
+        // Emergency exit if the circuit breaker has tripped (task from the current status)
         if (device_state == STATE_ALARM) break;
     }
 
-    // Фиксация на рабочей частоте пика резонанса
+    // Fixation of the resonance peak at the operating frequency
     set_pwm_frequency(best_freq);
     update_notch_coefficients((float32_t)best_freq, 200000.0f, 200.0f);
 }

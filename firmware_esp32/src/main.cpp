@@ -24,7 +24,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
             is_web_updating = true; // block the encoder polling in the loop
             target_power = msg.substring(12).toInt();
             encoder.setEncoderValue(target_power); // Synchronizing the physical pen
-            push_immediate_web_update(); // <-- ADD HERE: Sync changes from the Web          
+            push_immediate_web_update(); // <-- ADD HERE: Sync changes from the Web
         }
         // 2. Web power accept (mouse click/release)
         else if (msg == "APPLY_PWR") {
@@ -101,7 +101,7 @@ void loop() {
     // 1. Encoder handle rotation query
     if (encoder.encoderChanged()) {
         if (is_web_updating) {
-            // Это было эхо от вызова setEncoderValue! We just reset the flag and ignore it.
+            // It was an echo from the setEncoderValue call! We just reset the flag and ignore it.
             is_web_updating = false;
         } else {
             // This is the actual physical rotation of the handle by the user
@@ -147,7 +147,7 @@ void loop() {
     if (millis() - last_web_update >= 200) { 
         // We send background data ONLY if the system is not busy with a flood of graph scans
         if (stm32_status != "SCANNING") {
-            //FIXED: Background package now MUST contain an up-to-date target_power,
+            // FIXED: Background package now MUST contain an up-to-date target_power,
             // Otherwise it would erase changes from the encoder every 200 ms!
             String json = "{\"status\":\"" + stm32_status + "\",\"freq\":" + String(current_freq) + 
                           ",\"pwr\":" + String(current_power) + ",\"target_pwr\":" + String(target_power) + 
