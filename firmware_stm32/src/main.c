@@ -199,111 +199,52 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      /* 1. Process commands arriving from ESP32 via Ring Buffer UART4 (Non-blocking) */
+      /* 1. Handle Core Generator Sweep, Safety Watchdog, and DSP Calculations */
+      Process_Ultrasonic_Sweep();
+
+      /* 2. Process incoming commands from ESP32 via Ring Buffer (Non-blocking) */
       ESP_Link_Process();
 
       /* ==================================================================
-       * 2. EMERGENCY CURRENT PROTECTION (HARDWARE SAFETY CHECK)
+       * 3. EMERGENCY CURRENT PROTECTION (HARDWARE SAFETY CHECK)
        * ==================================================================
-       * We check the current sensor before each cycle. If the current exceeds the limit,
-       * We instantly turn off the PWM, reset the scanning flag and go into trouble.
+       * Evaluated instantly on every single CPU cycle for maximum safety.
+       * Uses raw ADC units from your MOD-ACS712-20A (1k/2k divider configuration).
        */
-      // float current_amps = read_current_sensor_amperes();
-      // if (current_amps > TERMINAL_CURRENT_LIMIT_AMPS) {
-      // __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0); // Shutdown PWM
-      // g_esp_link.scan_active = 0;                     // Stop scan
-      // send_emergency_stop_packet_to_esp32();          // Notify Web UI
-      // continue;
-      // }
+            
+      uint32_t current_adc_reading = abs((int32_t)HAL_ADC_GetValue(&hadc1) );
+      uint32_t deviation = 0;
 
-      /* ==================================================================
-       * 3. MAIN BUSINESS LOGIC CONTROLLER
-       * ==================================================================
-       */
-      if (g_esp_link.scan_active) 
-      {
-          // ------------------------------------------------------------------
-          // CAVITATION SCAN ACTIVE (FREQUENCY SWEEP & DSP ANALYSIS)
-          // ------------------------------------------------------------------
-          static uint32_t last_sweep_tick = 0;
-          static uint32_t current_frequency = 30000; // Start at 30 kHz
-          
-          /* Non-blocking step frequency sweep (e.g., change frequency every 10ms) */
-          if (HAL_GetTick() - last_sweep_tick >= 10) 
-          {
-              /* Update TIM1 register to set new oscillator frequency */
-              // update_tim1_pwm_frequency(current_frequency);
-              
-              /* Run hardware ADC conversion to sample hydrophone signal */
-              // start_hydrophone_adc_sampling();
-              
-              /* --------------------------------------------------------------
-               * ADVANCED DSP CAVITATION ANALYSIS (CMSIS-DSP NOTCH FILTERING)
-               * --------------------------------------------------------------
-               * To find the true resonance from cavitation noise, we need:
-               * 1. Pass the raw hydrophone signal through a Notch filter configured 
-               *    to `current_frequency` (cut out the main whistling tone).
-               * 2. Pass the remainder through a High-Pass filter (cut out low frequencies).
-               * 3. Calculate the root mean square value of the remaining noise (function arm_rms_f32).
-               */
-              float cavitation_noise_rms = 0.0f;
-              // arm_biquad_cascade_df1_f32(&S_notch, adc_buffer_f32, filtered_buffer_f32, BLOCK_SIZE);
-              // arm_rms_f32(filtered_buffer_f32, BLOCK_SIZE, &cavitation_noise_rms);
-              
-              /* Logic to track the absolute maximum of cavitation_noise_rms */
-              // if (cavitation_noise_rms > max_cavitation_noise) {
-              // max_cavitation_noise = cavitation_noise_rms;
-              // best_resonance_frequency = current_frequency;
-              // }
-              Process_Ultrasonic_Sweep();
-              /* Send REAL DSP telemetry packet to ESP32 Web UI SVG chart every 50ms */
-              static uint32_t last_telemetry_tick = 0;
-              if (HAL_GetTick() - last_telemetry_tick >= 50) 
-              {
-                  char telemetry_str[64];
-                  // Sending current sweeping frequency and calculated pure cavitation noise RMS
-                  snprintf(telemetry_str, sizeof(telemetry_str), "$LIVE,%lu,%.4f;\r\n", 
-                           current_frequency, cavitation_noise_rms);
-                  HAL_UART_Transmit(&huart4, (uint8_t*)telemetry_str, strlen(telemetry_str), 10);
-                  
-                  last_telemetry_tick = HAL_GetTick();
-              }
-
-              /* Increment sweep frequency up to 35 kHz, then loop or lock on resonance */
-              current_frequency += 50; 
-              if (current_frequency > 35000) {
-                  current_frequency = 30000; // Reset sweep loop for demo
-                  /* In production: switch to best_resonance_frequency and hold! */
-              }
-
-              last_sweep_tick = HAL_GetTick();
-          }
-      } 
-      else 
-      {
-          // ------------------------------------------------------------------
-          // GENERATOR IDLE SYSTEM SLEEP
-          // ------------------------------------------------------------------
-          // The button in the browser is OFF. Stop PWM generation to prevent heating.
-          __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-          
-          /* Send a flatline idle telemetry packet once per second to notify UI */
-          static uint32_t last_idle_tick = 0;
-          if (HAL_GetTick() - last_idle_tick >= 1000)
-          {
-              char idle_str[32];
-              snprintf(idle_str, sizeof(idle_str), "$LIVE,0,0.0000;\r\n");
-              HAL_UART_Transmit(&huart4, (uint8_t*)idle_str, strlen(idle_str), 10);
-              
-              last_idle_tick = HAL_GetTick();
-          }
+      // Calculate absolute deviation from the virtual zero level
+      if (current_adc_reading > ACS712_ZERO_LEVEL) {
+          deviation = current_adc_reading - ACS712_ZERO_LEVEL;
+      } else {
+          deviation = ACS712_ZERO_LEVEL - current_adc_reading;
       }
 
-    /* USER CODE END WHILE */
+      // Check if current exceeds the maximum safety envelope threshold
+      if (deviation > CURRENT_ALARM_STEP) {
+          HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);     // Kill power stage hardware instantly
+          #ifdef TIM_CHANNELN_ENABLE
+          HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);   // Cut complementary channel if used
+          #endif
+          __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0); // Force zero duty cycle registers
 
-    /* USER CODE BEGIN 3 */
+          g_esp_link.scan_active = 0;                  // Revoke scan request globally
+          
+          // Send an emergency alert sequence packet to notify the ESP32 Web UI
+          char estop_str[] = "$ESTOP,OVERCURRENT;\r\n";
+          HAL_UART_Transmit(&huart4, (uint8_t*)estop_str, strlen(estop_str), 10);
+          
+          continue;                                    // Skip further loop execution
+      }
+
+      /* USER CODE END WHILE */
+
+      /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -312,80 +253,89 @@ int main(void)
 void Process_Ultrasonic_Sweep(void) {
     static SweepState_t current_state = SWEEP_STATE_IDLE;
     static uint32_t last_sweep_tick = 0;
+    static uint32_t last_telemetry_tick = 0;
+    static uint32_t current_frequency = 30000; // Track frequency here safely
     
     uint32_t current_tick = HAL_GetTick();
     
-    // 1. WATCHDOG CHECK (Loss of connection with ESP32)
-    // We assume that in esp_link.c for each valid packet g_esp_link.last_rx_time = HAL_GetTick();
+    // 1. WATCHDOG TIMEOUT CHECK
     if (current_state == SWEEP_STATE_RUNNING) {
         if ((current_tick - g_esp_link.last_rx_time) > ESP_LINK_TIMEOUT_MS) {
-            current_state = SWEEP_STATE_STOPPING; // Emergency stop by timeout
+            current_state = SWEEP_STATE_STOPPING;
         }
     }
 
-    // 2. Atomically capturing a flag from an interrupt
     uint8_t is_scan_requested = g_esp_link.scan_active; 
 
-    // 3. FINITE MACHINE
+    // 2. STATE MACHINE STATE CONTROLS
     switch (current_state) {
         case SWEEP_STATE_IDLE:
             if (is_scan_requested) {
                 current_state = SWEEP_STATE_INIT;
+            } else {
+                /* Send a flatline idle telemetry packet once per second */
+                if (current_tick - last_telemetry_tick >= 1000) {
+                    char idle_str[32];
+                    snprintf(idle_str, sizeof(idle_str), "$LIVE,0,0.0000;\r\n");
+                    HAL_UART_Transmit(&huart4, (uint8_t*)idle_str, strlen(idle_str), 10);
+                    last_telemetry_tick = current_tick;
+                }
             }
             break;
 
         case SWEEP_STATE_INIT:
-            // Setting up safe starting PWM parameters
-            __HAL_TIM_SET_AUTORELOAD(&htim1, 2584); // Example for ~32.5 kHz at 168 MHz clock (substitute your ARR)
-            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0); // We start with zero filling
-            
-            // Launching PWM channels via HAL (including complementary ones, if any)
+            current_frequency = 30000; // Reset to start point
             HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-            #ifdef TIM_CHANNELN_ENABLE // If a half bridge with dead time is used
-            HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-            #endif
-
+            
             last_sweep_tick = current_tick;
+            last_telemetry_tick = current_tick;
             current_state = SWEEP_STATE_RUNNING;
             break;
 
         case SWEEP_STATE_RUNNING:
-            // Checking an explicit stop command from the Web interface
             if (!is_scan_requested) {
                 current_state = SWEEP_STATE_STOPPING;
                 break;
             }
 
-            // Frequency increment by timer (sweep)
-            if ((current_tick - last_sweep_tick) >= SWEEP_STEP_PERIOD_MS) {
+            /* Step frequency sweep logic (Every 10ms) */
+            static float cavitation_noise_rms = 0.0f; // Make it static or keep it local
+            
+            if ((current_tick - last_sweep_tick) >= 10) {
                 last_sweep_tick = current_tick;
                 
-                // An example of a smooth frequency change through the ARR register
-                // We calculate the new ARR value and set the operating duty cycle (for example, 50%)
-                uint32_t current_arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+                // update_tim1_pwm_frequency(current_frequency);
+                // start_hydrophone_adc_sampling();
                 
-                // Your combat logic for changing frequency:
-                // current_arr--; // Frequency shift up
+                cavitation_noise_rms = 0.0f; // This will update with actual DSP math later
+                // arm_biquad_cascade_df1_f32(&S_notch, adc_buffer_f32, filtered_buffer_f32, BLOCK_SIZE);
+                // arm_rms_f32(filtered_buffer_f32, BLOCK_SIZE, &cavitation_noise_rms);
+
+                /* Frequency Increment Control */
+                current_frequency += 50; 
+                if (current_frequency > 35000) {
+                    current_frequency = 30000; 
+                }
+            }
+
+            /* Global Telemetry dispatch (Every 50ms) */
+            if ((current_tick - last_telemetry_tick) >= 50) {
+                char telemetry_str[64];
                 
-                __HAL_TIM_SET_AUTORELOAD(&htim1, current_arr);
-                __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, current_arr / 2); // 50% Duty Cycle
+                // We use cavitation_noise_rms here to fix the compiler warning!
+                snprintf(telemetry_str, sizeof(telemetry_str), "$LIVE,%lu,%.4f;\r\n", 
+                         current_frequency, cavitation_noise_rms);
+                HAL_UART_Transmit(&huart4, (uint8_t*)telemetry_str, strlen(telemetry_str), 10);
+                
+                last_telemetry_tick = current_tick;
             }
             break;
 
         case SWEEP_STATE_STOPPING:
-            // SAFE HARDWARE STOP PWM
             HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-            #ifdef TIM_CHANNELN_ENABLE
-            HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
-            #endif
-            
-            // We force registers to zero to guarantee silence on the driver gates
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
             
-            // If the stop occurred due to a timeout, reset the request flag,
-            // so that the system does not restart itself if there is an accidental “echo” in the UART
             g_esp_link.scan_active = 0; 
-            
             current_state = SWEEP_STATE_IDLE;
             break;
 
@@ -394,6 +344,7 @@ void Process_Ultrasonic_Sweep(void) {
             break;
     }
 }
+
 
 /**
   * @brief System Clock Configuration
