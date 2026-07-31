@@ -7,9 +7,10 @@
 
 /* Structure to hold current system states received from ESP32 */
 typedef struct {
-    uint8_t  scan_active;    /* 1 = Scan in progress, 0 = Idle */
-    uint32_t power_level;    /* Current target power (0 to 100%) */
-    uint8_t  packet_ready;   /* Flag indicating a complete packet is ready to parse */
+    volatile uint8_t  scan_active;    /* 1 = Scan in progress, 0 = Idle */
+    volatile uint32_t power_level;    /* Current target power (0 to 100%) */
+    volatile uint8_t  packet_ready;   /* Flag indicating a complete packet is ready to parse */
+    volatile uint32_t last_rx_time;   /* Watchdog timestamp */
 } ESP_Link_TypeDef;
 
 /* Exported global variables */

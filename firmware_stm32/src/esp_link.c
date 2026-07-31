@@ -50,7 +50,13 @@ void ESP_Link_Process(void) {
     if (!g_esp_link.packet_ready) {
         return; // No new packet, exit instantly
     }
-
+    if (strstr((char*)rx_buffer, "$SCAN,1") != NULL) {
+        g_esp_link.scan_active = 1;
+        g_esp_link.last_rx_time = HAL_GetTick(); // Reset Watchdog timer
+    } else if (strstr((char*)rx_buffer, "$SCAN,0") != NULL) {
+        g_esp_link.scan_active = 0;
+        g_esp_link.last_rx_time = HAL_GetTick(); // Reset Watchdog timer
+    }
     /* Format expected: $SCAN,1; or $POWER,50; */
     if (strncmp(rx_buffer, "$SCAN,", 6) == 0) {
         g_esp_link.scan_active = (uint8_t)atoi(&rx_buffer[6]);

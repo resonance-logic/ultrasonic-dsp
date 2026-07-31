@@ -42,6 +42,20 @@
 #define CURRENT_ALARM_STEP  500U  // Deviation from zero by more than ~500 ADC units (~4.5 Amperes)
 
 #define BUFFER_SIZE 512 // Processing half-buffer size (RMS window size)
+
+#define ESP_LINK_TIMEOUT_MS   1500  // Communication timeout: 1.5 seconds
+#define SWEEP_STEP_PERIOD_MS  10    // Frequency change step every 10 ms
+
+typedef enum {
+    SWEEP_STATE_IDLE = 0,
+    SWEEP_STATE_INIT,
+    SWEEP_STATE_RUNNING,
+    SWEEP_STATE_STOPPING
+} SweepState_t;
+
+// External structures from your modules
+extern ESP_Link_TypeDef g_esp_link; 
+extern TIM_HandleTypeDef htim1; // Our power timer
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -100,6 +114,7 @@ static void MX_ADC1_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_UART4_Init(void);
+void Process_Ultrasonic_Sweep(void);
 /* USER CODE BEGIN PFP */
 void MX_TIM2_Init(void);
 void MX_DMA_Init(void);         // Add a prototype
@@ -242,7 +257,7 @@ int main(void)
               // max_cavitation_noise = cavitation_noise_rms;
               // best_resonance_frequency = current_frequency;
               // }
-
+              Process_Ultrasonic_Sweep();
               /* Send REAL DSP telemetry packet to ESP32 Web UI SVG chart every 50ms */
               static uint32_t last_telemetry_tick = 0;
               if (HAL_GetTick() - last_telemetry_tick >= 50) 
@@ -291,6 +306,93 @@ int main(void)
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
+}
+
+
+void Process_Ultrasonic_Sweep(void) {
+    static SweepState_t current_state = SWEEP_STATE_IDLE;
+    static uint32_t last_sweep_tick = 0;
+    
+    uint32_t current_tick = HAL_GetTick();
+    
+    // 1. WATCHDOG CHECK (Loss of connection with ESP32)
+    // We assume that in esp_link.c for each valid packet g_esp_link.last_rx_time = HAL_GetTick();
+    if (current_state == SWEEP_STATE_RUNNING) {
+        if ((current_tick - g_esp_link.last_rx_time) > ESP_LINK_TIMEOUT_MS) {
+            current_state = SWEEP_STATE_STOPPING; // Emergency stop by timeout
+        }
+    }
+
+    // 2. Atomically capturing a flag from an interrupt
+    uint8_t is_scan_requested = g_esp_link.scan_active; 
+
+    // 3. FINITE MACHINE
+    switch (current_state) {
+        case SWEEP_STATE_IDLE:
+            if (is_scan_requested) {
+                current_state = SWEEP_STATE_INIT;
+            }
+            break;
+
+        case SWEEP_STATE_INIT:
+            // Setting up safe starting PWM parameters
+            __HAL_TIM_SET_AUTORELOAD(&htim1, 2584); // Example for ~32.5 kHz at 168 MHz clock (substitute your ARR)
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0); // We start with zero filling
+            
+            // Launching PWM channels via HAL (including complementary ones, if any)
+            HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+            #ifdef TIM_CHANNELN_ENABLE // If a half bridge with dead time is used
+            HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+            #endif
+
+            last_sweep_tick = current_tick;
+            current_state = SWEEP_STATE_RUNNING;
+            break;
+
+        case SWEEP_STATE_RUNNING:
+            // Checking an explicit stop command from the Web interface
+            if (!is_scan_requested) {
+                current_state = SWEEP_STATE_STOPPING;
+                break;
+            }
+
+            // Frequency increment by timer (sweep)
+            if ((current_tick - last_sweep_tick) >= SWEEP_STEP_PERIOD_MS) {
+                last_sweep_tick = current_tick;
+                
+                // An example of a smooth frequency change through the ARR register
+                // We calculate the new ARR value and set the operating duty cycle (for example, 50%)
+                uint32_t current_arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+                
+                // Your combat logic for changing frequency:
+                // current_arr--; // Frequency shift up
+                
+                __HAL_TIM_SET_AUTORELOAD(&htim1, current_arr);
+                __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, current_arr / 2); // 50% Duty Cycle
+            }
+            break;
+
+        case SWEEP_STATE_STOPPING:
+            // SAFE HARDWARE STOP PWM
+            HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+            #ifdef TIM_CHANNELN_ENABLE
+            HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+            #endif
+            
+            // We force registers to zero to guarantee silence on the driver gates
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+            
+            // If the stop occurred due to a timeout, reset the request flag,
+            // so that the system does not restart itself if there is an accidental “echo” in the UART
+            g_esp_link.scan_active = 0; 
+            
+            current_state = SWEEP_STATE_IDLE;
+            break;
+
+        default:
+            current_state = SWEEP_STATE_STOPPING;
+            break;
+    }
 }
 
 /**
