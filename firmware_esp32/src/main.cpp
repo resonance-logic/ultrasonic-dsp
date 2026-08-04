@@ -41,9 +41,9 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
             target_power = 0;
             current_power = 0;
             encoder.setEncoderValue(0);
+            is_working = false;           
+            stm32_status = "STOPPED";     // <-- Update UI state text
             send_command_to_stm32("$SET,PWR,0;");
-            is_working = false;
-            stm32_status = "STOPPED";
         }
         else if (msg.startsWith("SET_CONFIG:")) {
             float target_temp = 8.0;

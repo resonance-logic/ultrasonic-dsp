@@ -9,7 +9,7 @@
 // External variables so that main.c or the scan module knows the DMA status
 extern uint16_t adc2_raw_buffer[BUFFER_SIZE * 2];
 extern volatile uint8_t dma_ready_flag;
-extern uint16_t *dma_buffer_pointer;
+extern uint16_t *volatile dma_buffer_pointer; 
 
 // Prototypes of module functions
 void hydrophone_init_filters(float32_t f_pwm);

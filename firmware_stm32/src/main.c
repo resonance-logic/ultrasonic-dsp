@@ -56,6 +56,12 @@ typedef enum {
 // External structures from your modules
 extern ESP_Link_TypeDef g_esp_link; 
 extern TIM_HandleTypeDef htim1; // Our power timer
+
+// Bring in dynamic configuration boundaries received from ESP32 via esp_link
+extern uint32_t freq_nominal;
+extern uint32_t freq_start;
+extern uint32_t freq_end;
+extern uint32_t freq_step;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -120,6 +126,7 @@ void MX_TIM2_Init(void);
 void MX_DMA_Init(void);         // Add a prototype
 void Set_US_Frequency_And_Power(uint32_t freq_hz, uint32_t power_percent);
 void Scan_Magnetostrictive_Resonance(void);
+void update_tim1_pwm_frequency(uint32_t frequency);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -249,12 +256,12 @@ int main(void)
   /* USER CODE END 3 */
 }
 
-
 void Process_Ultrasonic_Sweep(void) {
     static SweepState_t current_state = SWEEP_STATE_IDLE;
     static uint32_t last_sweep_tick = 0;
     static uint32_t last_telemetry_tick = 0;
-    static uint32_t current_frequency = 30000; // Track frequency here safely
+    static uint32_t current_frequency = 30000;
+    static float32_t tracked_cavitation_noise_rms = 0.0f;
     
     uint32_t current_tick = HAL_GetTick();
     
@@ -267,7 +274,7 @@ void Process_Ultrasonic_Sweep(void) {
 
     uint8_t is_scan_requested = g_esp_link.scan_active; 
 
-    // 2. STATE MACHINE STATE CONTROLS
+    // 2. STATE MACHINE CONTROLS
     switch (current_state) {
         case SWEEP_STATE_IDLE:
             if (is_scan_requested) {
@@ -284,8 +291,18 @@ void Process_Ultrasonic_Sweep(void) {
             break;
 
         case SWEEP_STATE_INIT:
-            current_frequency = 30000; // Reset to start point
+            // Sync with dynamic web interface parameters, use 30kHz safe fallback if 0
+            current_frequency = (freq_start > 0) ? freq_start : 30000;
+            
+            // Initialize Notch Filter coefficients for the initial frequency step
+            hydrophone_init_filters((float32_t)current_frequency);
+            
+            // Set initial timer PWM value and fire up the power stage
+            update_tim1_pwm_frequency(current_frequency); 
             HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+            #ifdef TIM_CHANNELN_ENABLE
+            HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+            #endif
             
             last_sweep_tick = current_tick;
             last_telemetry_tick = current_tick;
@@ -298,33 +315,47 @@ void Process_Ultrasonic_Sweep(void) {
                 break;
             }
 
-            /* Step frequency sweep logic (Every 10ms) */
-            static float cavitation_noise_rms = 0.0f; // Make it static or keep it local
-            
-            if ((current_tick - last_sweep_tick) >= 10) {
-                last_sweep_tick = current_tick;
-                
-                // update_tim1_pwm_frequency(current_frequency);
-                // start_hydrophone_adc_sampling();
-                
-                cavitation_noise_rms = 0.0f; // This will update with actual DSP math later
-                // arm_biquad_cascade_df1_f32(&S_notch, adc_buffer_f32, filtered_buffer_f32, BLOCK_SIZE);
-                // arm_rms_f32(filtered_buffer_f32, BLOCK_SIZE, &cavitation_noise_rms);
-
-                /* Frequency Increment Control */
-                current_frequency += 50; 
-                if (current_frequency > 35000) {
-                    current_frequency = 30000; 
-                }
+            /* 
+             * CRITICAL ADDITION: CONTINUOUS DSP PIPELINE RESIDUE CALCULATION
+             * Evaluated constantly on every loop pass. If the DMA buffer ready flag drops high, 
+             * it crunches the raw data, applies the filter, and captures the absolute RMS amplitude.
+             */
+            float32_t latest_rms = hydrophone_process_pipeline();
+            if (latest_rms > 0.00001f) { 
+                tracked_cavitation_noise_rms = latest_rms; // Capture verified math frame
             }
 
-            /* Global Telemetry dispatch (Every 50ms) */
+            /* Step frequency sweep logic (Uses flexible config values from ESP32) */
+            uint32_t active_step_ms = (freq_step > 0) ? freq_step : 10; 
+            uint32_t active_end_freq = (freq_end > 0) ? freq_end : 35000;
+            uint32_t active_start_freq = (freq_start > 0) ? freq_start : 30000;
+
+            /* Step frequency sweep logic (Inside SWEEP_STATE_RUNNING) */
+            if ((current_tick - last_sweep_tick) >= active_step_ms) {
+                last_sweep_tick = current_tick;
+                
+                // 1. Advance the generator frequency parameter (e.g., 32,500 Hz -> 32,550 Hz)
+                current_frequency += 50; 
+                if (current_frequency > active_end_freq) {
+                    current_frequency = active_start_freq; 
+                }
+                
+                // 2. SYNCHRONOUS COEFF RECALCULATION
+                // This instantly recalculates and updates the entire array for BOTH f0 and 2*f0
+                hydrophone_update_notch((float32_t)current_frequency);
+
+                // 3. SYNCHRONOUS HARDWARE SHIFT
+                // This updates TIM1 ARR, changing the physical switching speed of the IGBTs
+                update_tim1_pwm_frequency(current_frequency);
+            }
+
+            /* Global Telemetry dispatch (Every 50ms asynchronous stream -> 20 Hz) */
             if ((current_tick - last_telemetry_tick) >= 50) {
                 char telemetry_str[64];
                 
-                // We use cavitation_noise_rms here to fix the compiler warning!
+                // Transmit current sweeping frequency and the real filtered cavitation RMS noise floor
                 snprintf(telemetry_str, sizeof(telemetry_str), "$LIVE,%lu,%.4f;\r\n", 
-                         current_frequency, cavitation_noise_rms);
+                         current_frequency, (double)tracked_cavitation_noise_rms);
                 HAL_UART_Transmit(&huart4, (uint8_t*)telemetry_str, strlen(telemetry_str), 10);
                 
                 last_telemetry_tick = current_tick;
@@ -333,9 +364,13 @@ void Process_Ultrasonic_Sweep(void) {
 
         case SWEEP_STATE_STOPPING:
             HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+            #ifdef TIM_CHANNELN_ENABLE
+            HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+            #endif
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
             
             g_esp_link.scan_active = 0; 
+            tracked_cavitation_noise_rms = 0.0f;
             current_state = SWEEP_STATE_IDLE;
             break;
 
@@ -344,6 +379,7 @@ void Process_Ultrasonic_Sweep(void) {
             break;
     }
 }
+
 
 
 /**
@@ -888,3 +924,15 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
+void update_tim1_pwm_frequency(uint32_t frequency) {
+    if (frequency == 0) return;
+    
+    // Assuming 168 MHz Timer Clock frequency (Typical STM32F446 APB2 clock setup)
+    // Formula: ARR = (Timer_Clock / Frequency) - 1
+    uint32_t timer_clock = 168000000;
+    uint32_t new_arr = (timer_clock / frequency) - 1;
+    
+    __HAL_TIM_SET_AUTORELOAD(&htim1, new_arr);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_arr / 2); // Maintain solid 50% Duty cycle
+}

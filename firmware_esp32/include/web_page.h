@@ -149,11 +149,50 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     </div>
 
+    <!-- DSP DEBUG MATRIX TABLE TABLE -->
+    <div class="card" style="margin-top: 15px; background: #151515; border: 1px solid #ff9800; padding: 12px; border-radius: 6px;">
+        <h3 style="margin-top:0; color:#ff9800; font-size: 14px; font-family: sans-serif;">DSP Debug Matrix (Current + Last 10 History)</h3>
+        <div style="overflow-x: auto;">
+            <table id="debug-table" style="width:100%; border-collapse: collapse; text-align: left; font-family: monospace; font-size: 12px;">
+                <thead>
+                    <tr style="border-bottom: 2px solid #333; color: #888;">
+                        <th style="padding: 6px; width: 140px; text-align: left;">Parameter</th>
+                        <th style="padding: 6px; color: #00ff00; width: 65px;">Current</th>
+                        <th style="padding: 6px; opacity: 0.9; width: 55px;">-1</th>
+                        <th style="padding: 6px; opacity: 0.8; width: 55px;">-2</th>
+                        <th style="padding: 6px; opacity: 0.7; width: 55px;">-3</th>
+                        <th style="padding: 6px; opacity: 0.6; width: 55px;">-4</th>
+                        <th style="padding: 6px; opacity: 0.5; width: 55px;">-5</th>
+                        <th style="padding: 6px; opacity: 0.4; width: 55px;">-6</th>
+                        <th style="padding: 6px; opacity: 0.3; width: 55px;">-7</th>
+                        <th style="padding: 6px; opacity: 0.2; width: 55px;">-8</th>
+                        <th style="padding: 6px; opacity: 0.1; width: 55px;">-9</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr id="row-freq" style="border-bottom: 1px solid #222; color: #eee;">
+                        <td style="padding: 6px; font-weight: bold; color: #fff;">Freq (Hz)</td>
+                        <td colspan="10" style="padding: 6px; color: #555; font-style: italic;">Waiting for sweep data...</td>
+                    </tr>
+                    <tr id="row-rms" style="border-bottom: 1px solid #222; color: #eee;">
+                        <td style="padding: 6px; font-weight: bold; color: #fff;">Cav RMS</td>
+                        <td colspan="10" style="padding: 6px; color: #555; font-style: italic;">Waiting for sweep data...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <script>
         var websocket;
         var lastPreviewTime = 0;
         var scanData = []; 
         const MAX_POINTS = 120; // Limitation of 120 points, as was in Chart.js
+        
+        // Initialize global historical sliding arrays at the top of your script block
+        var freqHistory = Array(10).fill(0);
+        var rmsHistory = Array(10).fill(0.0000);
+        var lastTableUpdateTime = 0;
 
         function initWebSocket() {
             websocket = new WebSocket('ws://' + window.location.hostname + '/ws');
@@ -167,7 +206,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                 setTimeout(initWebSocket, 2000); 
             };
             
-            websocket.onmessage = function(event) {
+                websocket.onmessage = function(event) {
                 var data = JSON.parse(event.data);
                 
                 // Updating basic parameters
@@ -200,7 +239,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                     if (Number(data.temp) < 3.0 || Number(data.temp) > 75.0) { tempCard.classList.add('alarm'); }
                     else { tempCard.classList.remove('alarm'); }
                 }
-                / Collect points while scanning the STM frequency
+
+                // Collect points while scanning the STM frequency
                 // Check scan_freq or freq depending on what the STM sends
                 var currentFreq = Number(data.scan_freq) > 0 ? Number(data.scan_freq) : Number(data.freq);
                 var currentRms = Number(data.scan_rms) > 0 ? Number(data.scan_rms) : Number(data.rms);
@@ -237,13 +277,47 @@ const char index_html[] PROGMEM = R"rawliteral(
                     targetLabel.innerHTML = "Sollwert: " + data.target_pwr + " %";
                     targetLabel.classList.remove('warn');
                     
-                    //If the actual power has reached the specified value, remove the yellow waiting frame.
+                    // If the actual power has reached the specified value, remove the yellow waiting frame.
                     if (Number(data.pwr) === Number(data.target_pwr)) {
                         pwrCard.classList.remove('changed');
                     } else {
                         // Power is still in the process of changing (soft start/braking)
                         pwrCard.classList.add('changed');
                     }
+                }
+
+                // ==================================================================
+                // --- NEW CODE: DYNAMIC DSP DEBUG MATRIX TRACKING (5 Hz) ---
+                // ==================================================================
+                var now = Date.now();
+                if (now - lastTableUpdateTime >= 200) { // Throttled to 5 times per second (200ms)
+                    lastTableUpdateTime = now;
+                    
+                    // Push current values to the front of our sliding history rows
+                    freqHistory.unshift(currentFreq);
+                    rmsHistory.unshift(currentRms);
+                    
+                    // Cap row array lengths to maximum history depths (Discard items older than index 10)
+                    if (freqHistory.length > 10) freqHistory.pop();
+                    if (rmsHistory.length > 10) rmsHistory.pop();
+                    
+                    // Re-render Frequency Row Values dynamically
+                    var freqRowHtml = '<td style="padding: 6px; font-weight: bold; color: #fff;">Freq (Hz)</td>';
+                    freqHistory.forEach(function(val, idx) {
+                        var color = idx === 0 ? '#00ff00' : `rgba(255,255,255,${(1.0 - idx * 0.09).toFixed(2)})`;
+                        freqRowHtml += `<td style="padding: 6px; color: ${color};">${val}</td>`;
+                    });
+                    var rowFreqEl = document.getElementById('row-freq');
+                    if (rowFreqEl) rowFreqEl.innerHTML = freqRowHtml;
+                    
+                    // Re-render Cavitation Noise RMS Row Values dynamically
+                    var rmsRowHtml = '<td style="padding: 6px; font-weight: bold; color: #fff;">Cav RMS</td>';
+                    rmsHistory.forEach(function(val, idx) {
+                        var color = idx === 0 ? '#00ff00' : `rgba(0,255,0,${(1.0 - idx * 0.09).toFixed(2)})`;
+                        rmsRowHtml += `<td style="padding: 6px; color: ${color};">${Number(val).toFixed(4)}</td>`;
+                    });
+                    var rowRmsEl = document.getElementById('row-rms');
+                    if (rowRmsEl) rowRmsEl.innerHTML = rmsRowHtml;
                 }
             };
         }
